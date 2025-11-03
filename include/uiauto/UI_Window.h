@@ -6,7 +6,7 @@
 namespace  UI_Automation{
 
     class UIWindow: public UIAuto {
-        private:
+        protected:
             IUIAutomationElement * window = nullptr;
             IUIAutomationElementArray * windowSnapshot = nullptr;
         public:

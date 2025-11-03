@@ -60,3 +60,5 @@ void UI_Automation::DrawRect(const RECT& rect, COLORREF color) {
         DeleteObject(hPen);
         ReleaseDC(NULL, hdc);
     }
+
+

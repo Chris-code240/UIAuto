@@ -4,7 +4,10 @@
 #include <UIAutomation.h>
 #include <iostream>
 #include <comutil.h>
-
+#include <cmath>
+#include <thread>
+#include <chrono>
+#include <iostream>
 
 #pragma comment(lib, "comsuppw.lib")
 #pragma comment(lib, "Ole32.lib")
