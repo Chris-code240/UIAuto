@@ -86,4 +86,35 @@ void UI_Automation::UIWindow::drawWindow(){
     this->windowSnapshot->Release();
 }
 
+void UI_Automation::UIWindow::writeText(std::wstring text ) {    
+    if(!this->window){
+        return;
+    }
+    HRESULT hr;
+    hr = this->window->SetFocus();
+    if(FAILED(hr)){
+        return;
+    }
+
+    Sleep(100);
+
+
+    for (wchar_t c : text) {
+        INPUT ip = {0};
+        ip.type = INPUT_KEYBOARD;
+        ip.ki.wVk = 0;               // virtual-key not used with unicode
+        ip.ki.wScan = c;             // character code
+        ip.ki.dwFlags = KEYEVENTF_UNICODE;
+        SendInput(1, &ip, sizeof(INPUT));
+
+        // key release
+        ip.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        SendInput(1, &ip, sizeof(INPUT));
+
+        Sleep(50); // tiny delay to make it more reliable
+    }
+    window->Release();
+    return;
+}
+
 UI_Automation::UIWindow::~UIWindow(){}

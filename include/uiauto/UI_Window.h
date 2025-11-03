@@ -17,6 +17,7 @@ namespace  UI_Automation{
             IUIAutomationElementArray * getWindowSnapshot();
             void updateWindowSnapshot();
             IUIAutomationElementArray * getSubElements(IUIAutomationElement *uiElement);
+            void writeText(std::wstring text);
     };
     
 } 
