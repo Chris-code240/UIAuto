@@ -1,80 +1,77 @@
-#include "llama.h"
-#include "ggml.h"
+// #include "./external/llama.cpp/include/llama.h"
+// #include "./external/llama.cpp/ggml/include/ggml.h"
 #include <iostream>
 #include <vector>
 #include <string>
 #include <ctime>
 
+// include
+#include <iostream>
+#include <string>
+#include <unordered_map>
+#include <functional>
+
+#include "./include/ui_manager/ui_manager.h"
+
+#include "include\helpers\gemini-tools.h"
+
+int test(int x){
+    return x *2;
+}
+
 int main() {
-    ggml_backend_load_all();
-    ggml_backend_cpu_init();
-    llama_backend_init();
-    llama_model_params model_params = llama_model_default_params();
-    llama_model* model = llama_model_load_from_file("model/Qwen2.5-0.5B-Q5_K_S.gguf", model_params);
-    if (!model) {
-        std::cerr << "❌ Failed to load model file!\n";
-        llama_backend_free();
-        return 1;
-    }
-    llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = 512;
-    llama_context* ctx = llama_init_from_model(model, ctx_params);
+    UI_Automation::UIManager manager;
 
-    if (!ctx) {
-        std::cerr << "❌ Failed to init context!\n";
-        llama_model_free(model);
-        llama_backend_free();
-        return 1;
+    MSG msg = {0};
+
+    std::cout << "Listening for UI Automation events...\n";
+    int x = 0;
+
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+        if (x == 20) break;
+        x += 1;
     }
 
-    const char* prompt = "Who are you?";
+    std::string key =  "some_api_key";
+    // GeminiTools gt(key);
 
-    const llama_vocab* vocab = llama_model_get_vocab(model);
+    // // register a tool
+    // gt.tools().registerTool("get_desktop", [&](const json& args) -> json{
+    //     return manager.getDesktopSnapshot().dump(4);
+    // }, "Returns every opened application including Taskbar, in the form [{boundingBox:{bootom:INT, left: INT, right:INT, top:INT}, name:WINDOW_NAME},...]");
 
-    std::vector<llama_token> tokens;
-    tokens.resize(strlen(prompt) * 4);
+    // gt.tools().registerTool("set_window_as_foreground",[&](const json& args)-> json {
+    //     std::string windowName = args.value("window_name","");
+    //     return manager.selectWindow(windowName).dump(4);
+    // }, "Given window_name, it sets the target window forward. Returns {success: true} if window exist and opeartion was successful else {success: false}");
 
-    int n_tokens = llama_tokenize(
-        vocab,
-        prompt,
-        strlen(prompt),
-        tokens.data(),
-        tokens.size(),
-        true,
-        true
-    );
+    // gt.tools().registerTool("get_window", [&](const json& args)-> json {
+    //     std::string windowName = args.value("window_name", "");
+    //     return manager.getWindowElements(windowName, nullptr).dump(4);
+    // }, "Given window_name, it returns all UI elements of the target window, in a json format: { elementName: NAME OR VALUE_BEING_HELD_BY_THE_ELEMENT, boundingBox:{bootom:INT, left: INT, right:INT, top:INT}, elementType:FOR_EXAMPLE_TEXTELEMENT, clickablePoint:{x:x, y:y}}");
+    // // Send prompt
+    // json result = gt.run("gemini-2.5-flash", 
+    //     "Check if i have vscode opened."
+    // );
 
-    if (n_tokens < 0) {
-        std::cerr << "Tokenization failed\n";
-        return 1;
-    }
+    // std::cout << result.dump(4) << std::endl;
+    // std::future<json> res = std::async(std::launch::async, &UI_Automation::UIManager::getWindow, &manager,"Home - File Explorer");
 
-    tokens.resize(n_tokens);
-
-
-    auto sparams = llama_sampler_chain_default_params();
-    llama_sampler* smpl = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
-
-    std::cout << "Model reply: ";
-
-    for (int i = 0; i < 100; ++i) {
-        llama_token new_token_id = llama_sampler_sample(smpl, ctx, -1);
-        if (llama_vocab_is_eog(vocab, new_token_id)) break;
-
-        char buf[128];
-        int n = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, true);
-        if (n < 0) break;
-        std::cout.write(buf, n);
-
-        llama_batch next_batch = llama_batch_get_one(&new_token_id, 1);
-        if (llama_decode(ctx, next_batch) != 0) break;
-    }
-
-    std::cout << std::endl;
-    llama_sampler_free(smpl);
-    llama_free(ctx);
-    llama_model_free(model);
-    llama_backend_free();
-    return EXIT_SUCCESS;
+    // std::cout<<res.get().dump(4);
+    // std::future<int> r = std::async(std::launch::async, test, 4);
+    // try
+    // {
+    //     std::cout<<manager.getWindowElements("Lenovo Vantage").dump(4);
+    // }
+    // catch(const std::exception& e)
+    // {
+    //     std::cerr << e.what() << '\n';
+    // }
+    
+    // // std::cout<<manager.getDesktopSnapshot().dump(4);
+    std::cout<<manager.openedWindows.dump()<<std::endl;
+    manager.~UIManager();
+    return 0;
 }

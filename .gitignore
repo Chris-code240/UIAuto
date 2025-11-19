@@ -1,4 +1,9 @@
 *.obj
 *.exe
+**/*main-oflline.cpp
 **/*.gguf
-external/*
+# external/*
+.json
+**/fastText/*
+.env
+**/llama.cpp/*
