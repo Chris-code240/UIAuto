@@ -21,8 +21,8 @@ class GeminiTools {
     std::string systemHeader; // optional global instructions
 
 public:
-    GeminiTools(const std::string &apiKey, const std::string &systemHeader_ = "")
-        : client(apiKey), systemHeader(systemHeader_) {}
+    GeminiTools(const std::string &apiKey, const std::string &systemHeader_ = "", const json &desktop_snapshot = json::array())
+        : client(apiKey), systemHeader(systemHeader_), registry(desktop_snapshot) {}
 
     ToolRegistry & tools() { return registry; }
 
@@ -216,6 +216,7 @@ CHECK_FUNCALL:
         {
             json toolMsg;
             std::ostringstream ts;
+            // std::cout<<"=================Result======================\n"<<toolResult.dump(4)<<std::endl;
             ts << "Tool '" << fname << "' returned: " << toolResult.dump()
                << "\n\nPlease provide a final answer to the user, incorporating the tool's result. "
                << "Do not call further tools unless absolutely necessary.";

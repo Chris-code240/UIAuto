@@ -16,9 +16,11 @@ struct ToolInfo {
 };
 
 class ToolRegistry {
+    json desktop = json::array();
     std::unordered_map<std::string, ToolInfo> tools;
 
 public:
+    ToolRegistry(json _desktop = json::array()){ this->desktop = _desktop;}
     void registerTool(const std::string &name,
                       ToolFn fn,
                       const std::string &description)
@@ -54,7 +56,7 @@ public:
             ss << "- " << kv.first << ": " << kv.second.description << "\n";
         }
 
-        ss << "\nWhen you want to call a tool, return ONLY this JSON:\n"
+        ss << "\nYou are a helpful desktop assistant on a Windows 11 laptop. You have toools at your disposal to perform some tasks.\nThis is the initial desktop view in a json format:\n"<<this->desktop<<"\nWhen you want to call a tool, return ONLY this JSON:\n"
            << "{\"functionCall\": {\"name\": \"tool_name\", \"args\": {...}}}\n"
            << "Never include extra text outside that JSON.\n";
 

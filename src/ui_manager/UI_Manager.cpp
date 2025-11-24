@@ -4,7 +4,7 @@ using namespace UI_Automation;
 
 
 UIManager::UIManager(){
-
+    CoInitialize(NULL);
     HRESULT hr;
     this->IUIA = this->createUIAObject();
     if (! this->IUIA){
@@ -20,22 +20,53 @@ UIManager::UIManager(){
     
     hr =  this->IUIA->AddAutomationEventHandler( UIA_Window_WindowOpenedEventId,this->pRoot, TreeScope_Subtree, NULL,handler );
 
-    if (FAILED(hr) || FAILED(this->IUIA->AddAutomationEventHandler( UIA_Window_WindowClosedEventId,this->pRoot, TreeScope_Subtree, NULL,handler ))){
+    if (FAILED(hr) || FAILED(this->IUIA->AddAutomationEventHandler( UIA_Window_WindowClosedEventId,this->pRoot, TreeScope_Children, NULL,handler ))){
         throw std::runtime_error("Coudl not register handler");
         abort();
     }
 
-    this->allApps += GetInstalledAppsFromRegistry(HKEY_LOCAL_MACHINE);
-    this->allApps += GetInstalledAppsFromRegistry(HKEY_CURRENT_USER);
+    this->allApps = GetInstalledApplicationsJson();
 
     StructureChangedEventHandler* sch = new StructureChangedEventHandler(this);
     IUIA->AddStructureChangedEventHandler(  pRoot,  TreeScope_Subtree,  NULL, sch);
+
+    //capture desktop
+    //1 get already opened windows
+    try{
+
+        IUIAutomationCondition * trueCond = nullptr;
+        IUIAutomationElementArray * foundWindows = nullptr;
+
+        int length = 0;
+        hr = this->IUIA->CreateTrueCondition(&trueCond);
+        if (FAILED (hr)) throw std::runtime_error("Coudl not create condtion to capyure desktop windows");
+
+        hr = this->pRoot->FindAll(TreeScope_Children, trueCond, &foundWindows);
+        if (FAILED(hr)) throw std::runtime_error("Could not grab windows");
+        if(!foundWindows || FAILED(foundWindows->get_Length(&length)) || length == 0) throw std::runtime_error("No windows found");
+        // std::cout<<"Already opened windows: "<<length<<" \n";
+        for(int i = 0; i< length; i++){
+            IUIAutomationElement * window = nullptr;
+            foundWindows->GetElement(i, &window);
+            this->captureWindow(window);
+            if(window) window->Release();
+            // std::cout<<i<<std::endl;
+        }
+        foundWindows->Release();
+
+        //@TODO: send Desktop to LLM
+        // this->uiDom = this->memoryToJson();
+        // std::cout<<this->memoryToJson().dump(4);
+    }catch(const std::exception &e){
+        std::cout<<"Error - "<<e.what();
+    }
+    CoUninitialize();
 
 }
 
 
 UIManager::~UIManager(){
-    std::cout<<computeDiffs().dump(4);
+    // std::cout<<computeDiffs().dump(4);
     if (this->IUIA != nullptr) this->IUIA->Release();
     if (this->pRoot != nullptr)  this->pRoot->Release();
     CoUninitialize();
@@ -73,62 +104,7 @@ IUIAutomationElement * UIManager::getRoot(){
 }
 
 json UIManager::getDesktopSnapshot() {
-    json result = json::array();
-
-    HRESULT hr;
-    IUIAutomationCondition* pCond = nullptr;
-    IUIAutomationElementArray* subElements = nullptr;
-
-    hr = this->IUIA->CreateTrueCondition(&pCond);
-    if (FAILED(hr)) throw std::runtime_error("CreateTrueCondition failed");
-
-    hr = this->getDesktop()->FindAll(TreeScope_Children, pCond, &subElements);
-    pCond->Release();
-
-    if (FAILED(hr)) throw std::runtime_error("FindAll failed");
-
-    int length = 0;
-    if (FAILED(subElements->get_Length(&length)))
-        throw std::runtime_error("Could not get Desktop Elements Length");
-
-    for (int i = 0; i < length; i++) {
-        IUIAutomationElement* element = nullptr;
-        if (FAILED(subElements->GetElement(i, &element)))
-            throw std::runtime_error("GetElement failed");
-
-        VARIANT varName;
-        VariantInit(&varName);
-
-        RECT boundingBox{};
-        if (FAILED(element->GetCurrentPropertyValue(UIA_NamePropertyId, &varName)))
-            throw std::runtime_error("GetCurrentPropertyValue failed");
-
-        if (FAILED(element->get_CurrentBoundingRectangle(&boundingBox)))
-            throw std::runtime_error("BoundingRectangle failed");
-
-        std::string name =
-            (varName.vt == VT_BSTR && varName.bstrVal != nullptr)
-            ? std::string(_bstr_t(varName.bstrVal))
-            : "(no name)";
-
-        VariantClear(&varName);
-
-        json item = {
-            {"name", name},
-            {"boundingBox", {
-                {"left", boundingBox.left},
-                {"top", boundingBox.top},
-                {"right", boundingBox.right},
-                {"bottom", boundingBox.bottom}
-            }}
-        };
-
-        result.push_back(item);
-
-        if (element) element->Release();
-    }
-
-    subElements->Release();
+    json result = this->memoryToJson();
     return result;
 }
 
@@ -245,7 +221,7 @@ json UIManager::leftClick(int x, int y){
     INPUT inputs[2] = {};
 
     int numberOfDialogs = 0;
-    if (!x && !y ) goto cleanup;
+    if (!x && !y ) return data;
     HRESULT hr;
 
     SetCursorPos(x ,y );
@@ -258,21 +234,26 @@ json UIManager::leftClick(int x, int y){
 
     SendInput(2, inputs, sizeof(INPUT));
     Sleep(200);
+    json diff;
+    uiDomPrev = uiDom;
+    uiDom.clear();
+
+    computeDiffs();
     // get all opened dialogs
-    this->IUIA->CreatePropertyCondition(UIA_ControlTypePropertyId, _variant_t(UIA_WindowControlTypeId), &windowsBeforeClickCond);
-    hr = this->pRoot->FindAll(TreeScope_Subtree, dialogsCond, &windowsBeforeClick);
-    if (FAILED(hr)) goto cleanup;
-    Sleep(2000);
+    // this->IUIA->CreatePropertyCondition(UIA_ControlTypePropertyId, _variant_t(UIA_WindowControlTypeId), &windowsBeforeClickCond);
+    // hr = this->pRoot->FindAll(TreeScope_Subtree, dialogsCond, &windowsBeforeClick);
+    // if (FAILED(hr)) goto cleanup;
+    // Sleep(2000);
 
     
    
-    goto cleanup;
+    // goto cleanup;
 
-    cleanup:
+    // cleanup:
 
-        if (targetElement) targetElement->Release();
-        if (openedDialogs) openedDialogs->Release();
-        if (dialogsCond) dialogsCond->Release();
+    //     if (targetElement) targetElement->Release();
+    //     if (openedDialogs) openedDialogs->Release();
+    //     if (dialogsCond) dialogsCond->Release();
         return data;
 }
 
@@ -529,16 +510,19 @@ json UIManager::GetInstalledAppsFromRegistry(HKEY rootKey) {
 }
 
 bool UIManager::open_app(const std::string& appName) {
-    auto apps = getAllApps(); // combines HKLM + HKCU
-    for (auto& app : apps) {
-        if (app["name"] == appName) {
-            std::string path = app["path"];
-            if (path.empty()) return false;
-            ShellExecuteA(NULL, "open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
-            return true;
+    try{
+        auto apps = getAllApps(); // combines HKLM + HKCU
+        std::string path = apps[appName]["path"];
+        if (path.empty()){
+            path = "";
         }
+        ShellExecuteA(NULL, "open", path.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        Sleep(150);
+        //send memory to LLM
+        return true;
+    } catch(...){
+        return false;
     }
-    return false;
 }
 
 bool UIManager::dragAndDrop(int from_x, int from_y, int to_x, int to_y) {
@@ -606,7 +590,7 @@ json UIManager::computeDiffs() {
 
     // 1. Added elements
     for (auto& [id, el] : uiDom) {
-        if (!uiDomPrev.count(id)) {
+        if (uiDomPrev.find(id) == uiDomPrev.end()) {
             events.push_back({
                 {"event","element_added"},
                 {"id", id},
@@ -618,17 +602,18 @@ json UIManager::computeDiffs() {
 
     // 2. Removed elements
     for (auto& [id, el] : uiDomPrev) {
-        if (!uiDom.count(id)) {
+        if (uiDom.find(id) == uiDom.end()) {
             events.push_back({
                 {"event","element_removed"},
-                {"id", id}
+                {"id", id},
+                {"name", el.name}
             });
         }
     }
 
     // 3. Modified bounds / name changes
     for (auto& [id, el] : uiDom) {
-        if (!uiDomPrev.count(id)) continue;
+        if (uiDomPrev.find(id) == uiDomPrev.end()) continue;
 
         const auto& old = uiDomPrev[id];
 
@@ -667,71 +652,424 @@ json UIManager::computeDiffs() {
 
 
 void UIManager::captureWindow(IUIAutomationElement* win) {
-    // Save previous UI state
-    uiDomPrev = uiDom;
-    uiDom.clear();
-
-    IUIAutomationCondition* cond = nullptr;
-    IUIA->CreateTrueCondition(&cond);
-
-    IUIAutomationElementArray* elems = nullptr;
-    win->FindAll(TreeScope_Subtree, cond, &elems);
-    cond->Release();
-
-    if (!elems) return;
-
-    int length = 0;
-    elems->get_Length(&length);
-
-    for (int i = 0; i < length; i++) {
-        IUIAutomationElement* e = nullptr;
-        elems->GetElement(i, &e);
-        if (!e) continue;
-
-        ElementInfo info;
-
-        // Generate stable ID
-        info.id = makeStableId(e);
-
-        // Name
-        BSTR en = nullptr;
-        e->get_CurrentName(&en);
-        info.name = en ? std::string(_bstr_t(en)) : "(no name)";
-        if (en) SysFreeString(en);
-
-        // Type
-        e->get_CurrentControlType(&info.type);
-
-        // Bounds
-        e->get_CurrentBoundingRectangle(&info.bounds);
-
-        // Parent
-        IUIAutomationElement* parent = nullptr;
-        e->GetCachedParent(&parent);
-        if (parent) {
-            info.parent = makeStableId(parent);
-            parent->Release();
-        }
-
-        uiDom[info.id] = info;
-
-        e->Release();
+   CoInitialize(NULL);
+    if (!win) return;
+    CONTROLTYPEID ct = 0;
+    if (FAILED(win->get_CurrentControlType(&ct)) || (ct != UIA_WindowControlTypeId && ct != UIA_PaneControlTypeId)) {
+        std::cout<<"This is not a window ct "<<ct<<" != "<<UIA_WindowControlTypeId<<std::endl;
+        return;
     }
 
-    elems->Release();
+    BSTR name_ = nullptr;
+    win->get_CurrentName(&name_);
+    std::string name = name_ ? std::string(_bstr_t(name_)) : "";
+    
+    
+    
+    CONTROLTYPEID typeId = 0;
+    win->get_CurrentControlType(&typeId);
 
-    // Now compute diffs
-    auto diffs = computeDiffs();
+    RECT rect;
+    win->get_CurrentBoundingRectangle(&rect);
 
-    // (Optional) Signal the LLM or store diffs
-    // if (!diffs.empty()) {
-    //     latestUiDiff = diffs;
+    SAFEARRAY * ridArray = nullptr;
+    win->GetRuntimeId(&ridArray);
+    std::string rid = runtimeIdToString(ridArray);
+    SafeArrayDestroy(ridArray);
+
+    UIWindowState state;
+
+    state.runtimeId = rid;
+    state.title = name;
+    state.root = buildUITree(win);
+
+    // if(memory.count(rid)){
+
+    //     auto & oldstate = memory[rid];
+    //     json diff;
+    //     diffUI(oldstate.root, state.root, diff);
+    //     if(!diff["added"].empty() ||!diff["removed"].empty() || !diff["changed"].empty()){
+    //         //sendDiffToLLM
+    //         std::cout<<"[WINDOW CHANGED] Name: "<<name<<std::endl;
+    //     }
     // }
 
-    std::cout << "[UI CAPTURE] Snapshot stored. Elements: " 
-              << uiDom.size() << std::endl;
+    std::cout<<"[WINDOW CAPTURED]: "<<name<<std::endl;
+    memory[state.runtimeId] = state;
+    CoUninitialize();
+     
 }
 
+json UIManager::nodeToJson(const std::shared_ptr<UIElementNode>& node) {
+    CoInitialize(NULL);
+    json j;
+    j["id"] = node->runtimeId;
+    j["name"] = node->name;
+    j["bounds"] = {
+        {"top", node->bounds.top},
+        {"left", node->bounds.left},
+        {"right", node->bounds.right},
+        {"bottom", node->bounds.bottom}
+    };
+    j["elementType"] = getElementType(node->controlType);
+    VARIANT var = node->var;
+    j["elementValue"] = variantToString__NodeElement(var);
+    // Children
+    j["children"] = json::array();
+    for (auto& child : node->children) {
+        j["children"].push_back(nodeToJson(child));
+    }
+    std::cout<<j<<std::endl;
+    CoUninitialize();
+    return j;
+}
+
+
+json UIManager::memoryToJson() {
+    json data = json::array();
+
+    try{
+        CoInitialize(NULL);
+        for (auto& [rid, windowState] : memory) {
+
+            json w;
+
+            w["runtimeId"] = rid;
+            w["windowTitle"] = windowState.title;
+
+            if (windowState.root) {
+                w["tree"] = nodeToJson(windowState.root);
+            } else {
+                w["tree"] = nullptr;
+            }
+
+            data.push_back(w);
+        }
+        CoUninitialize();
+    }catch(const std::exception &e ){
+        std::cout<<e.what();
+    }
+    return data;
+    
+}
+
+void UIManager::refreshWindowForElement(IUIAutomationElement* elem) {
+    if (!elem) return;
+
+    IUIAutomationTreeWalker* walker = nullptr;
+    HRESULT hr = getIUIA()->get_ControlViewWalker(&walker);
+    if (FAILED(hr) || !walker) return;
+
+    IUIAutomationElement* current = elem;
+    current->AddRef();   // because we are going to release as we climb
+
+    while (true) {
+
+        // Check if this is a Window
+        CONTROLTYPEID ct = 0;
+        current->get_CurrentControlType(&ct);
+
+        if (ct == UIA_WindowControlTypeId) {
+            // We reached the top-level window
+            // owner->captureWindow(current);
+            captureWindow(current);
+            current->Release();
+            walker->Release();
+            return;
+        }
+
+        // Move up
+        IUIAutomationElement* parent = nullptr;
+        hr = walker->GetParentElement(current, &parent);
+
+        current->Release();   // release previous
+
+        if (FAILED(hr) || !parent) {
+            // No parent -> stop
+            walker->Release();
+            return;
+        }
+
+        current = parent;
+    }
+}
+
+void UIManager::diffUI(   const std::shared_ptr<UIElementNode>& oldNode,   const std::shared_ptr<UIElementNode>& newNode,   json& result){
+    if (!oldNode && !newNode) return;
+
+    if (!oldNode && newNode) {
+        result["added"].push_back(newNode->runtimeId);
+        return;
+    }
+
+    if (oldNode && !newNode) {
+        result["removed"].push_back(oldNode->runtimeId);
+        return;
+    }
+
+    // Check changed properties
+    if (oldNode->name != newNode->name ||
+        memcmp(&oldNode->bounds, &newNode->bounds, sizeof(RECT)) != 0 ||
+        oldNode->controlType != newNode->controlType)
+    {
+        result["changed"].push_back(newNode->runtimeId);
+    }
+
+    // Map children by runtimeId
+    std::unordered_map<std::string, std::shared_ptr<UIElementNode>> oldChildren, newChildren;
+
+    for (auto& c : oldNode->children) oldChildren[c->runtimeId] = c;
+    for (auto& c : newNode->children) newChildren[c->runtimeId] = c;
+
+    // Compare recursively
+    for (auto& [rid, oc] : oldChildren)
+        diffUI(oc, newChildren.count(rid) ? newChildren[rid] : nullptr, result);
+
+    for (auto& [rid, nc] : newChildren)
+        if (!oldChildren.count(rid))
+            diffUI(nullptr, nc, result);
+}
+
+
+json UIManager::inputText(POINT pt, std::string text) {
+
+    // 1. Capture old UI snapshot
+    auto oldTree = this->uiDom;   // shared_ptr<UIElementNode>
+
+    // 2. Get element at point
+    IUIAutomationElement* inputField = nullptr;
+    HRESULT hr = this->IUIA->ElementFromPoint(pt, &inputField);
+    if (FAILED(hr) || !inputField) {
+        return json(); 
+    }
+
+    inputField->SetFocus();
+    Sleep(150);
+    text.size();
+    for (int i = 0; i< text.size(); i++) {
+        char c =text[i];
+        INPUT ip{};
+        SHORT vk = VkKeyScanA(c);
+        if (vk == -1) continue;
+
+        bool shift = (vk & 0x0100) != 0;
+        BYTE vkCode = LOBYTE(vk);
+
+        if (shift) {
+            ip.type = INPUT_KEYBOARD;
+            ip.ki.wVk = VK_SHIFT;
+            SendInput(1, &ip, sizeof(INPUT));
+        }
+
+        // Key down
+        ip.type = INPUT_KEYBOARD;
+        ip.ki.wVk = vkCode;
+        ip.ki.dwFlags = 0;
+        SendInput(1, &ip, sizeof(INPUT));
+
+        // Key up
+        ip.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, &ip, sizeof(INPUT));
+
+        if (shift) {
+            ip.ki.wVk = VK_SHIFT;
+            ip.ki.dwFlags = KEYEVENTF_KEYUP;
+            SendInput(1, &ip, sizeof(INPUT));
+        }
+        if(i + 1 == text.size()){
+            // press ENTER
+            ip.ki.wVk = VK_RETURN;
+            ip.ki.dwFlags = 0;
+            SendInput(1, &ip, sizeof(INPUT));
+        }
+        Sleep(10);
+    }
+
+
+    // 4. Re-scan UI
+    
+    refreshWindowForElement(inputField);
+
+    return json{{"success", true}};
+}
+
+std::string UIManager::runtimeIdToString(SAFEARRAY* sa) {
+        if (!sa) return "";
+        LONG l, u;
+        SafeArrayGetLBound(sa, 1, &l);
+        SafeArrayGetUBound(sa, 1, &u);
+
+        std::wstring s;
+        for (LONG i = l; i <= u; i++) {
+            int val = 0;
+            SafeArrayGetElement(sa, &i, &val);
+            s += std::to_wstring(val) + L"-";
+        }
+        return std::string(s.begin(), s.end());
+}
+
+
+std::shared_ptr<UIElementNode> UIManager::buildUITree(IUIAutomationElement* elem) {
+
+    if (!elem) return nullptr;
+
+    // Extract main properties
+    BSTR nameB = nullptr;
+    elem->get_CurrentName(&nameB);
+    std::string name = nameB ? std::string(_bstr_t(nameB)) : "";
+    if (nameB) SysFreeString(nameB);
+
+    CONTROLTYPEID typeId = 0;
+    elem->get_CurrentControlType(&typeId);
+
+    RECT rc;
+    elem->get_CurrentBoundingRectangle(&rc);
+
+    SAFEARRAY* ridArray = nullptr;
+    elem->GetRuntimeId(&ridArray);
+    std::string rid = runtimeIdToString(ridArray);
+    SafeArrayDestroy(ridArray);
+
+    VARIANT var;
+    elem->GetCurrentPropertyValue(UIA_ValueValuePropertyId, &var);
+    auto node = std::make_shared<UIElementNode>();
+    node->runtimeId = rid;
+    node->name      = name;
+    node->controlType = typeId;
+    node->bounds = rc;
+    node->var = var;
+    VariantClear(&var);
+    // --- Find children
+    IUIAutomationElementArray* children = nullptr;
+    IUIAutomationTreeWalker* walker = nullptr;
+
+    getIUIA()->get_ControlViewWalker(&walker);
+    if (walker) {
+
+        IUIAutomationElement* child = nullptr;
+        walker->GetFirstChildElement(elem, &child);
+
+        while (child) {
+
+            node->children.push_back(buildUITree(child));
+
+            IUIAutomationElement* next = nullptr;
+            walker->GetNextSiblingElement(child, &next);
+            addElementToDOM(child);
+            uiDom.clear();
+            child->Release();
+            child = next;
+        }
+
+        walker->Release();
+    }
+
+    return node;
+}
+
+std::unordered_map<std::string, UI_Automation::ElementInfo> UIManager::addElementToDOM(IUIAutomationElement * ele){
+    CoInitialize(NULL);
+    if (! ele) return this->uiDom;
+    HRESULT hr;
+    //find parent of ele
+    IUIAutomationTreeWalker * walker = nullptr;
+    IUIAutomationCondition * trueCond = nullptr;
+    IUIAutomationElementArray * target__elements = nullptr;
+
+    this->IUIA->get_ContentViewWalker(&walker);
+    if (walker) {
+
+        IUIAutomationElement* current = ele;
+        IUIAutomationElement * parent = nullptr;
+        hr = walker->GetParentElement(current,&parent);
+
+        if(FAILED(hr) || !parent){
+            current->Release();
+            return this->uiDom;
+        }
+        current = parent;
+            
+        if(SUCCEEDED(this->IUIA->CreateTrueCondition(&trueCond)) && SUCCEEDED(current->FindAll(TreeScope_Children, trueCond, &target__elements))){
+
+            //get current's id
+            SAFEARRAY * parent_sa = nullptr;
+            current->GetRuntimeId(&parent_sa);
+
+            //get all elements
+            int l = 0;
+            target__elements->get_Length(&l);
+            for(int i = 0; i< l; i++){
+                IUIAutomationElement *windowEle = nullptr;
+                target__elements->GetElement(i, &windowEle);
+
+                UI_Automation::ElementInfo info;
+                SAFEARRAY *sa = nullptr;
+                windowEle->GetRuntimeId(&sa);
+                info.id = this->runtimeIdToString(sa);
+
+                VARIANT retVale;
+                windowEle->GetCurrentPropertyValue(UIA_NamePropertyId,&retVale);
+                info.name =  wchar_t(retVale.bstrVal) || "_no_name_";
+
+                RECT rc;
+                windowEle->get_CurrentBoundingRectangle(&rc);
+                info.bounds = rc;
+
+                CONTROLTYPEID eleTypeId;
+                windowEle->get_CurrentControlType(&eleTypeId);
+                info.type = eleTypeId;
+
+                //get all children of this windowEle
+                IUIAutomationCondition * trueCondWindowEle = nullptr;
+                IUIAutomationElementArray * windowEleChildren = nullptr;
+                this->IUIA->CreateTrueCondition(&trueCondWindowEle);
+                windowEle->FindAll(TreeScope_Children, trueCondWindowEle, &windowEleChildren);
+                int length = 0;
+
+                windowEleChildren->get_Length(&length);
+                std::vector<std::string> children;
+                for (int j = 0; j< length; j++){
+                    IUIAutomationElement * child = nullptr;
+                    windowEleChildren->GetElement(j, &child);
+                    //get child id
+                    SAFEARRAY *child_sa;
+                    child->GetRuntimeId(&child_sa);
+                    children.push_back(this->runtimeIdToString(child_sa));
+
+                }
+
+                info.children = children;
+                info.parent = this->runtimeIdToString(parent_sa);
+    
+                uiDom[info.id] = info;
+            }
+        }
+        walker->Release();
+        if(parent) parent->Release();
+        if(current) current->Release();
+    }
+    if (target__elements) target__elements->Release();
+    CoUninitialize();
+    return uiDom;
+}
+
+std::string to_utf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    int size_needed = WideCharToMultiByte(
+        CP_UTF8, 0,
+        w.data(), (int)w.size(),
+        nullptr, 0,
+        nullptr, nullptr
+    );
+    std::string str(size_needed, 0);
+    WideCharToMultiByte(
+        CP_UTF8, 0,
+        w.data(), (int)w.size(),
+        &str[0], size_needed,
+        nullptr, nullptr
+    );
+    return str;
+}
 
 
 

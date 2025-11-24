@@ -21,7 +21,8 @@
 #include <vector>
 #include <future>
 #include <thread>
-
+#include <locale>
+#include <codecvt>
 
 #pragma comment(lib, "comsuppw.lib")
 #pragma comment(lib, "Ole32.lib")
@@ -41,20 +42,35 @@ namespace UI_Automation {
         std::unordered_map<std::string, float> coordinates;
     };
 
-    class UIManager {
-        struct ElementInfo {
+    struct UIElementNode {
+        std::string runtimeId;
+        std::string name;
+        int controlType;
+        RECT bounds;
+        std::vector<std::shared_ptr<UIElementNode>> children;
+        VARIANT var;
+    };
+    struct UIWindowState {
+        std::string runtimeId;
+        std::string title;
+        std::shared_ptr<UIElementNode> root;
+    };
+    struct ElementInfo {
             std::string id;
             std::string name;
             CONTROLTYPEID type;
             RECT bounds;
             std::string parent;
             std::vector<std::string> children;
-        };
+    };
 
-        std::unordered_map<std::string, ElementInfo> uiDom;    // current memory
-        std::unordered_map<std::string, ElementInfo> uiDomPrev; // previous snapshot
+    class UIManager {
+        
+
+
 
         private:
+
             // IUIAutomationElementArray * openedWindoes = nullptr;
             IUIAutomation * createUIAObject(){
                 CoInitialize(NULL);
@@ -74,13 +90,23 @@ namespace UI_Automation {
             json allApps = json::array();
 
         public:
+        std::unordered_map<std::string, ElementInfo> uiDom;    // current memory
+        std::unordered_map<std::string, ElementInfo> uiDomPrev; // previous snapshot
+        std::unordered_map<std::string, ElementInfo> addElementToDOM(IUIAutomationElement * ele);
         json openedWindows = {};
+        std::unordered_map<std::string, UIWindowState> memory;
+        std::shared_ptr<UIElementNode> buildUITree(IUIAutomationElement* elem);
+        std::string runtimeIdToString(SAFEARRAY* sa);
+        json nodeToJson(const std::shared_ptr<UIElementNode>& node);
+        json memoryToJson();
+        json diffMemory(IUIAutomationElement * element);
         UIManager();
         ~UIManager();
 
         IUIAutomation * getIUIA(){
             return this->IUIA;
         }
+
         IUIAutomationElement *getDesktop();
         IUIAutomationElement *getRoot();
 
@@ -95,7 +121,7 @@ namespace UI_Automation {
 
         // json walkWindow(IUIAutomationElement * window, IUIAutomationElement * start_element, IUIAutomationElement * end_element);
         json walkWindow();
-
+        json inputText(POINT pt, std::string text);
         json leftClick(int x, int y);
         json rightClick(IUIAutomationElement * targetElement = nullptr, int x = NULL, int y = NULL);
         json hover(int x, int y);
@@ -133,6 +159,8 @@ namespace UI_Automation {
         json computeDiffs();
         void captureWindow(IUIAutomationElement* win);
 
+        void diffUI( const std::shared_ptr<UIElementNode>& oldNode,   const std::shared_ptr<UIElementNode>& newNode,   json& result);
+        void refreshWindowForElement(IUIAutomationElement* elem);
     };
 
 
@@ -163,7 +191,7 @@ namespace UI_Automation {
         // IUIAutomationEventHandler
     HRESULT STDMETHODCALLTYPE HandleAutomationEvent(IUIAutomationElement* sender, EVENTID eventId) override {
         if (!sender) return S_OK;
-
+        CoInitialize(NULL);
         VARIANT varName;
         VariantInit(&varName);
 
@@ -172,20 +200,9 @@ namespace UI_Automation {
             SAFEARRAY* runtimeIdArray = nullptr;
             elem->GetRuntimeId(&runtimeIdArray);
             if (!runtimeIdArray) return "";
-
-            LONG lower = 0, upper = 0;
-            SafeArrayGetLBound(runtimeIdArray, 1, &lower);
-            SafeArrayGetUBound(runtimeIdArray, 1, &upper);
-
-            std::wstring idStr;
-            for (LONG i = lower; i <= upper; i++) {
-                int val = 0;
-                SafeArrayGetElement(runtimeIdArray, &i, &val);
-                idStr += std::to_wstring(val) + L"-";
-            }
-
+            return owner->runtimeIdToString(runtimeIdArray);
             SafeArrayDestroy(runtimeIdArray);
-            return std::string(idStr.begin(), idStr.end());
+
         };
 
         std::string runtimeId = getRuntimeId(sender);
@@ -212,7 +229,13 @@ namespace UI_Automation {
                 int length = 0;
                 children->get_Length(&length);
 
-                for (int i = 0; i < length; i++) {
+                UIWindowState state;
+                state.title = windowTitle;
+                state.runtimeId = getRuntimeId(sender);
+                state.root = owner->buildUITree(sender);
+                owner->memory[state.runtimeId] = state;
+
+                for (int i = 0; i < 0; i++) {
                     IUIAutomationElement* elem = nullptr;
                     children->GetElement(i, &elem);
                     if (!elem) continue;
@@ -225,7 +248,7 @@ namespace UI_Automation {
 
                     RECT rect;
                     elem->get_CurrentBoundingRectangle(&rect);
-
+                    
                     json temp = {
                         {"elementName", elemName ? std::string(_bstr_t(elemName)) : "(no name)"},
                         {"elementType", controlType},
@@ -249,9 +272,8 @@ namespace UI_Automation {
         }
 
         else if (eventId == UIA_Window_WindowClosedEventId) {
-            if (this->owner->openedWindows.contains(runtimeId)) {
-                std::string closedTitle = this->owner->openedWindows[runtimeId]["windowTitle"];
-                this->owner->openedWindows.erase(runtimeId);
+            if (this->owner->memory.count(runtimeId)) {
+                this->owner->memory.erase(runtimeId);
             } else {
                 std::cout << "[!] Closed window not found (ID: " << runtimeId << ")" << std::endl;
             }
@@ -270,6 +292,7 @@ namespace UI_Automation {
         }
 
         VariantClear(&varName);
+        CoUninitialize();
         return S_OK;
     }
 
@@ -317,10 +340,11 @@ public:
     //---------------------------------------------------------
     HRESULT STDMETHODCALLTYPE HandleStructureChangedEvent( IUIAutomationElement* sender,  StructureChangeType changeType,    SAFEARRAY* runtimeId ) override 
     {
+        // std::cout<<"=======Structural Changed detected=======\n";
         if (!sender) return S_OK;
-
+        CoInitialize(NULL);
         // Convert runtime ID to string
-        std::string rid = runtimeIdToString(runtimeId);
+        std::string rid = owner->runtimeIdToString(runtimeId);
 
         // Fetch basic element info
         BSTR name = nullptr;
@@ -330,17 +354,18 @@ public:
         sender->get_CurrentControlType(&ctype);
 
         // Log basic info
-        std::cout << "\n[STRUCTURE CHANGE] "
-                  << "RTID = " << rid
-                  << " | name = " << (name ? (const char *)&name : "(no name)")
-                  << " | type = " << ctype
-                  << " | changeType = " << changeType
-                  << std::endl;
+        // std::cout << "\n[STRUCTURE CHANGE] "
+        //           << "RTID = " << rid
+        //           << " | name = " << (name ? (const char *)&name : "(no name)")
+        //           << " | type = " << ctype
+        //           << " | changeType = " << changeType
+        //           << std::endl;
 
         // Update captured UI for the window this element belongs to
         refreshWindowForElement(sender);
 
         if (name) SysFreeString(name);
+        CoUninitialize();
         return S_OK;
     }
 
@@ -385,7 +410,16 @@ void refreshWindowForElement(IUIAutomationElement* elem) {
 
         if (ct == UIA_WindowControlTypeId) {
             // We reached the top-level window
+            owner->captureWindow(current);
+
+            // compute diff. If changes, send to llm
+            json oldUI = owner->memoryToJson();
             captureWindow(current);
+            json newUI = owner->memoryToJson();
+            // now diff oldUI and newUI
+            // std::cout<<"=============DIFF==============================\n"<<diffUI(oldUI, newUI)<<"\n=======================================\n";
+            // send to LLM
+
             current->Release();
             walker->Release();
             return;
@@ -407,10 +441,67 @@ void refreshWindowForElement(IUIAutomationElement* elem) {
     }
 }
 
+json diffUI(const json& oldUI, const json& newUI) {
+    json result;
+    result["added"] = json::array();
+    result["removed"] = json::array();
+    result["modified"] = json::array();
+
+    //------------------------------------------------------
+    // Build index maps for fast lookup
+    //------------------------------------------------------
+    std::unordered_map<std::string, json> oldMap;
+    std::unordered_map<std::string, json> newMap;
+
+    for (auto& win : oldUI) {
+        std::string id = win.value("rid", "");
+        oldMap[id] = win;
+    }
+
+    for (auto& win : newUI) {
+        std::string id = win.value("rid", "");
+        newMap[id] = win;
+    }
+
+    //------------------------------------------------------
+    // Detect REMOVED and MODIFIED (from perspective of old)
+    //------------------------------------------------------
+    for (auto& [id, oldWin] : oldMap) {
+        if (!newMap.count(id)) {
+            // Window or element disappeared
+            result["removed"].push_back(id);
+            continue;
+        }
+
+        auto newWin = newMap[id];
+
+        if (oldWin != newWin) {
+            // Something in the element changed
+            result["modified"].push_back({
+                {"id", id},
+                {"old", oldWin},
+                {"new", newWin}
+            });
+        }
+    }
+
+    //------------------------------------------------------
+    // Detect ADDED (in new but not old)
+    //------------------------------------------------------
+    for (auto& [id, newWin] : newMap) {
+        if (!oldMap.count(id)) {
+            result["added"].push_back(newWin);
+        }
+    }
+
+    return result;
+}
+
+
     //---------------------------------------------------------
     // Captures all elements under a window (same way you do it)
     //---------------------------------------------------------
-    void captureWindow(IUIAutomationElement* win) {
+    void captureWindow_(IUIAutomationElement* win) {
         // This duplicates your window-element collection from WindowEventHandler
         // You may refactor this to call your existing code.
 
@@ -456,7 +547,6 @@ void refreshWindowForElement(IUIAutomationElement* elem) {
                         {"right", r.right}, {"bottom", r.bottom}
                     }}
                 });
-
                 if (en) SysFreeString(en);
                 e->Release();
             }
@@ -472,18 +562,105 @@ void refreshWindowForElement(IUIAutomationElement* elem) {
         owner->openedWindows[rid] = winJson;
         owner->openedWindows[rid]["elements"] = arr;
 
-        std::cout << "\n[UPDATED WINDOW] " 
-                  << winJson["windowTitle"] 
-                  << " | runtimeID =" << rid
-                  << std::endl;
+        // std::cout << "\n[UPDATED WINDOW] " 
+        //           << winJson["windowTitle"] 
+        //           << " | runtimeID =" << rid
+        //           << std::endl;
 
         if (name) SysFreeString(name);
     }
 
+std::shared_ptr<UIElementNode> buildUITree(IUIAutomationElement* elem) {
+
+    if (!elem) return nullptr;
+
+    // Extract main properties
+    BSTR nameB = nullptr;
+    elem->get_CurrentName(&nameB);
+    std::string name = nameB ? std::string(_bstr_t(nameB)) : "";
+    if (nameB) SysFreeString(nameB);
+
+    CONTROLTYPEID typeId = 0;
+    elem->get_CurrentControlType(&typeId);
+
+    RECT rc;
+    elem->get_CurrentBoundingRectangle(&rc);
+
+    SAFEARRAY* ridArray = nullptr;
+    elem->GetRuntimeId(&ridArray);
+    std::string rid = runtimeIdToString(ridArray);
+    SafeArrayDestroy(ridArray);
+
+    auto node = std::make_shared<UIElementNode>();
+    node->runtimeId = rid;
+    node->name      = name;
+    node->controlType = typeId;
+    node->bounds = rc;
+
+    // --- Find children
+    IUIAutomationElementArray* children = nullptr;
+    IUIAutomationTreeWalker* walker = nullptr;
+
+    owner->getIUIA()->get_ControlViewWalker(&walker);
+    if (walker) {
+
+        IUIAutomationElement* child = nullptr;
+        walker->GetFirstChildElement(elem, &child);
+
+        while (child) {
+
+            node->children.push_back(buildUITree(child));
+
+            IUIAutomationElement* next = nullptr;
+            walker->GetNextSiblingElement(child, &next);
+
+            child->Release();
+            child = next;
+        }
+
+        walker->Release();
+    }
+
+    return node;
+}
+
+
+void captureWindow(IUIAutomationElement* window) {
+
+    SAFEARRAY* ridArray = nullptr;
+    window->GetRuntimeId(&ridArray);
+    std::string winRid = runtimeIdToString(ridArray);
+    SafeArrayDestroy(ridArray);
+
+    // Get title
+    BSTR nameB = nullptr;
+    window->get_CurrentName(&nameB);
+    std::string winName = nameB ? std::string(_bstr_t(nameB)) : "";
+    if (nameB) SysFreeString(nameB);
+
+    UIWindowState state;
+    state.runtimeId = winRid;
+    state.title = winName;
+    state.root = buildUITree(window);
+    if (owner->memory.count(winRid)) {
+        auto& oldState = owner->memory[winRid];
+        json diff;
+        owner->diffUI(oldState.root, state.root, diff);
+
+        if (!diff["added"].empty() ||!diff["removed"].empty() || !diff["changed"].empty()) 
+        {
+            // sendDiffToLLM(diff);
+            std::cout<<"======================\n"<<diff<<"\n==================================\n";  
+        }
+    }
+
+    owner->memory[winRid] = state;
+
+    std::cout << "[WINDOW REFRESHED] " << winName << " (" << winRid << ")" << std::endl;
+}
+
 
 };
-
-
 
 
 }
