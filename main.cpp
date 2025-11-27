@@ -12,10 +12,13 @@
 #include <functional>
 
 #include "./include/ui_manager/ui_manager.h"
-
+// #include ".\include\helpers\manager_utils.h"
 #include "include\helpers\gemini-tools.h"
 #include <windows.h>
-  
+#include "external\opencv2\opencv.hpp"
+
+using namespace cv;
+
 //std::wstring ws =   std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>>{}.from_bytes();
 //
 
@@ -23,7 +26,7 @@ int test(int &x){
    return x++;
 }
 
-int main() {
+int mai0n() {
     UI_Automation::UIManager manager;
     std::cout<<manager.getDesktopSnapshot().dump(4);
     std::string key = "Some_API_KEY";
@@ -190,4 +193,25 @@ int main() {
     // std::cout<<test(y)<<" "<<y;
     return 0;
 
+}
+
+// -----------------------------
+// MAIN EXAMPLE
+// -----------------------------
+int main()
+{
+    cv::Mat screenshot = takeScreenshot();
+
+    if (screenshot.empty()) {
+        std::cout << "Failed to capture screen\n";
+        return -1;
+    }
+
+    drawGrid(screenshot);
+
+    imwrite("desktop_grid.jpg", screenshot);
+
+    imshow("Desktop with Grid", screenshot);
+    waitKey(0);
+    return 0;
 }

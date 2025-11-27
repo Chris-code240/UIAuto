@@ -3,7 +3,10 @@
 **/*main-oflline.cpp
 **/*.gguf
 # external/*
+**/opencv2/*
 .json
 **/fastText/*
 .env
 **/llama.cpp/*
+*.bmp
+*.jpg

@@ -1,5 +1,4 @@
 #include "../../include/ui_manager/UI_Manager.h"
-#include "../../include/helpers/manager_utils.h"
 using namespace UI_Automation;
 
 
@@ -1070,6 +1069,5 @@ std::string to_utf8(const std::wstring& w) {
     );
     return str;
 }
-
 
 

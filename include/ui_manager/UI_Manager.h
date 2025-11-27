@@ -23,6 +23,7 @@
 #include <thread>
 #include <locale>
 #include <codecvt>
+#include "../helpers/manager_utils.h"
 
 #pragma comment(lib, "comsuppw.lib")
 #pragma comment(lib, "Ole32.lib")
